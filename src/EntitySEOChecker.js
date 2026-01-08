@@ -1,973 +1,1014 @@
 import React, { useState } from 'react';
 
 const EntitySEOChecker = () => {
+  // Form state
   const [formData, setFormData] = useState({
     companyName: '',
-    websiteUrl: '',
-    leaders: [{ name: '', role: '' }, { name: '', role: '' }, { name: '', role: '' }],
-    keywords: ['', '', ''],
-    competitors: [
-      { url: '', leaderName: '', leaderRole: '' },
-      { url: '', leaderName: '', leaderRole: '' },
-      { url: '', leaderName: '', leaderRole: '' }
-    ]
+    website: '',
+    industry: '',
+    keywords: '',
+    leadership: [{ name: '', title: '' }],
+    competitors: [{ name: '', website: '', leadership: { name: '', title: '' } }]
   });
-  
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // LLM selection - default to ChatGPT and Gemini only
+  const [selectedLLMs, setSelectedLLMs] = useState({
+    chatgpt: true,
+    gemini: true,
+    claude: false,
+    perplexity: false,
+    copilot: false
+  });
+
+  // Analysis state
   const [results, setResults] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [error, setError] = useState(null);
-  const [selectedLLMs, setSelectedLLMs] = useState(['chatgpt', 'gemini']); // Default to just 2
-  const [showStrategyModal, setShowStrategyModal] = useState(false);
-  const [strategyForm, setStrategyForm] = useState({
-    name: '', email: '', phone: '', company: '', website: '',
-    goals: '', budget: '', timeline: '', currentChallenges: '', competitors: ''
-  });
-  const [strategySubmitted, setStrategySubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0, message: '' });
+  const [error, setError] = useState(null);
+
+  // SEMRush state
+  const [semrushData, setSemrushData] = useState(null);
+  const [semrushLoading, setSemrushLoading] = useState(false);
+
+  // Email modal state
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailForm, setEmailForm] = useState({
+    name: '',
+    company: '',
+    email: ''
+  });
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailStatus, setEmailStatus] = useState(null);
+
+  // Debug state
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugLogs, setDebugLogs] = useState([]);
 
   const llmOptions = [
-    { id: 'chatgpt', name: 'ChatGPT (OpenAI)', icon: '🟢', color: '#10a37f' },
-    { id: 'gemini', name: 'Gemini (Google)', icon: '🔴', color: '#ea4335' },
-    { id: 'claude', name: 'Claude (Anthropic)', icon: '🟣', color: '#7c3aed' },
-    { id: 'perplexity', name: 'Perplexity AI', icon: '🔵', color: '#1fb8cd' },
-    { id: 'copilot', name: 'Copilot (Microsoft)', icon: '🟡', color: '#f59e0b' }
+    { id: 'chatgpt', name: 'ChatGPT', color: '#10a37f' },
+    { id: 'gemini', name: 'Google Gemini', color: '#4285f4' },
+    { id: 'claude', name: 'Claude', color: '#cc785c' },
+    { id: 'perplexity', name: 'Perplexity', color: '#20808d' },
+    { id: 'copilot', name: 'Microsoft Copilot', color: '#00bcf2' }
   ];
 
-  // Abstrakt brand colors
-  const brand = {
-    primary: '#E85D04', // Orange
-    secondary: '#1B1B1B', // Dark
-    accent: '#F48C06', // Light orange
-    dark: '#0D0D0D',
-    light: '#FFFFFF',
-    gray: '#6B7280',
-    success: '#10B981',
-    warning: '#F59E0B',
-    danger: '#EF4444'
+  // Debug logging
+  const addLog = (msg, data = null) => {
+    const ts = new Date().toISOString().split('T')[1].split('.')[0];
+    setDebugLogs(prev => [...prev, { ts, msg, data }]);
+    console.log(`[${ts}] ${msg}`, data || '');
   };
 
-  const handleInputChange = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
-  
-  const handleLeaderChange = (index, field, value) => {
-    setFormData(prev => {
-      const newLeaders = [...prev.leaders];
-      newLeaders[index] = { ...newLeaders[index], [field]: value };
-      return { ...prev, leaders: newLeaders };
-    });
+  // Input handlers
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleKeywordChange = (index, value) => {
-    setFormData(prev => {
-      const newKeywords = [...prev.keywords];
-      newKeywords[index] = value;
-      return { ...prev, keywords: newKeywords };
-    });
+  const handleLeadershipChange = (index, field, value) => {
+    const updated = [...formData.leadership];
+    updated[index][field] = value;
+    setFormData(prev => ({ ...prev, leadership: updated }));
+  };
+
+  const addLeadership = () => {
+    if (formData.leadership.length < 3) {
+      setFormData(prev => ({
+        ...prev,
+        leadership: [...prev.leadership, { name: '', title: '' }]
+      }));
+    }
+  };
+
+  const removeLeadership = (index) => {
+    if (formData.leadership.length > 1) {
+      setFormData(prev => ({
+        ...prev,
+        leadership: prev.leadership.filter((_, i) => i !== index)
+      }));
+    }
   };
 
   const handleCompetitorChange = (index, field, value) => {
-    setFormData(prev => {
-      const newCompetitors = [...prev.competitors];
-      newCompetitors[index] = { ...newCompetitors[index], [field]: value };
-      return { ...prev, competitors: newCompetitors };
-    });
+    const updated = [...formData.competitors];
+    if (field.includes('.')) {
+      const [parent, child] = field.split('.');
+      updated[index][parent][child] = value;
+    } else {
+      updated[index][field] = value;
+    }
+    setFormData(prev => ({ ...prev, competitors: updated }));
   };
 
-  const toggleLLM = (llmId) => {
-    setSelectedLLMs(prev => prev.includes(llmId) ? prev.filter(id => id !== llmId) : [...prev, llmId]);
+  const addCompetitor = () => {
+    if (formData.competitors.length < 3) {
+      setFormData(prev => ({
+        ...prev,
+        competitors: [...prev.competitors, { name: '', website: '', leadership: { name: '', title: '' } }]
+      }));
+    }
   };
 
+  const removeCompetitor = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      competitors: prev.competitors.filter((_, i) => i !== index)
+    }));
+  };
+
+  // SEMRush API call
+  const fetchSemrushData = async (domain) => {
+    if (!domain) return null;
+    
+    addLog(`Fetching SEMRush data for: ${domain}`);
+    
+    try {
+      const response = await fetch('/api/semrush', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, type: 'all' })
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        addLog('SEMRush error', err);
+        return null;
+      }
+
+      const data = await response.json();
+      addLog('SEMRush data received', data);
+      return data;
+    } catch (err) {
+      addLog('SEMRush fetch failed', err.message);
+      return null;
+    }
+  };
+
+  // AI Analysis API call
+  const analyzeQuery = async (query, llmName, analysisType = 'entity') => {
+    addLog(`Analyzing: ${query.substring(0, 50)}... on ${llmName}`);
+    
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, llmName, analysisType })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (err) {
+      addLog(`Analysis error: ${err.message}`);
+      return {
+        error: true,
+        errorMessage: err.message,
+        summary: `Error: ${err.message}`,
+        entityFound: false,
+        confidenceScore: 0,
+        sentimentScore: 0,
+        sentiment: 'unknown',
+        topSources: [],
+        recommendations: 'Analysis failed'
+      };
+    }
+  };
+
+  // Main analysis function
   const runAnalysis = async () => {
-    if (selectedLLMs.length === 0) { setError('Please select at least one AI search engine.'); return; }
-    setIsAnalyzing(true); setError(null); setResults(null);
+    setLoading(true);
+    setError(null);
+    setResults(null);
+    setSemrushData(null);
+    setDebugLogs([]);
 
-    const queries = [];
-    
-    // Company queries
-    if (formData.companyName) {
-      queries.push({ type: 'company', label: `Company: ${formData.companyName}`, query: `What is ${formData.companyName}? Tell me about this company, their reputation, services, and online presence.`, analysisType: 'entity' });
+    addLog('Starting analysis...');
+
+    const selectedLLMList = Object.entries(selectedLLMs)
+      .filter(([_, selected]) => selected)
+      .map(([id]) => llmOptions.find(l => l.id === id));
+
+    if (selectedLLMList.length === 0) {
+      setError('Please select at least one AI search engine');
+      setLoading(false);
+      return;
     }
-    if (formData.websiteUrl) {
-      queries.push({ type: 'website', label: `Website: ${formData.websiteUrl}`, query: `Analyze the website ${formData.websiteUrl}. What backlinks does it have? What is its domain authority?`, analysisType: 'backlinks' });
-    }
-    
-    // Leadership queries
-    formData.leaders.forEach(l => {
-      if (l.name && l.role) {
-        queries.push({ 
-          type: 'leader', 
-          label: `${l.name} (${l.role})`, 
-          query: `Who is ${l.name}, ${l.role}${formData.companyName ? ` at ${formData.companyName}` : ''}? What is their online reputation, thought leadership presence, podcast appearances, and media coverage?`,
-          analysisType: 'leadership'
-        });
-      }
-    });
-    
-    // Keyword queries
-    formData.keywords.forEach(k => {
-      if (k) queries.push({ type: 'keyword', label: `Keyword: ${k}`, query: `${k} - what are the best companies or solutions for this? Who ranks for this term?`, analysisType: 'entity' });
-    });
 
-    // Competitor queries
-    formData.competitors.forEach((c, i) => {
-      if (c.url) {
-        queries.push({ 
-          type: 'competitor', 
-          label: `Competitor ${i + 1}: ${c.url}`, 
-          query: `Analyze ${c.url}. What are their top backlinks? What press coverage do they have? What is their domain authority?`,
-          analysisType: 'competitor'
-        });
-        if (c.leaderName && c.leaderRole) {
-          queries.push({ 
-            type: 'competitor_leader', 
-            label: `Competitor Leader: ${c.leaderName}`, 
-            query: `Who is ${c.leaderName}, ${c.leaderRole}? What is their online presence, podcast appearances, and thought leadership?`,
-            analysisType: 'leadership'
-          });
-        }
-      }
-    });
-
-    if (queries.length === 0) { setError('Please fill in at least one field.'); setIsAnalyzing(false); return; }
-
-    const totalCalls = queries.length * selectedLLMs.length;
-    let currentCall = 0;
+    const allResults = {
+      companyName: formData.companyName,
+      website: formData.website,
+      company: {},
+      leadership: [],
+      competitors: [],
+      semrushData: null
+    };
 
     try {
-      const allResults = {};
-      for (const q of queries) {
-        allResults[q.label] = { type: q.type, query: q.query, llmResults: {} };
-        for (const llmId of selectedLLMs) {
-          currentCall++;
-          const llmName = llmOptions.find(l => l.id === llmId)?.name || llmId;
-          setProgress({ current: currentCall, total: totalCalls, message: `Analyzing ${q.label} with ${llmName}...` });
-          
-          try {
-            const response = await fetch('/api/analyze', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: q.query, llmName, analysisType: q.analysisType })
-            });
+      // Calculate total queries
+      let totalQueries = selectedLLMList.length; // company
+      totalQueries += selectedLLMList.length * formData.leadership.filter(l => l.name).length;
+      totalQueries += selectedLLMList.length * formData.competitors.filter(c => c.name).length;
+      totalQueries += formData.competitors.filter(c => c.leadership?.name).length * selectedLLMList.length;
+      
+      let currentQuery = 0;
 
-            if (!response.ok) throw new Error(`API returned ${response.status}`);
-            const data = await response.json();
-            allResults[q.label].llmResults[llmId] = data;
-          } catch (e) {
-            allResults[q.label].llmResults[llmId] = { error: true, summary: `Error: ${e.message}`, confidenceScore: 0, sentimentScore: 5 };
-          }
-        }
+      // Fetch SEMRush data for main company
+      if (formData.website) {
+        setSemrushLoading(true);
+        setProgress({ current: 0, total: totalQueries, message: 'Fetching SEMRush data...' });
+        const mainSemrush = await fetchSemrushData(formData.website);
+        allResults.semrushData = mainSemrush?.data || null;
+        setSemrushData(mainSemrush?.data || null);
+        setSemrushLoading(false);
       }
-      setResults(allResults);
-      setActiveTab('dashboard');
-    } catch (err) {
-      setError(`Analysis failed: ${err.message}`);
-    }
-    setIsAnalyzing(false);
-    setProgress({ current: 0, total: 0, message: '' });
-  };
 
-  // Scoring functions
-  const calculateOverallScore = () => {
-    if (!results) return 0;
-    let total = 0, count = 0;
-    Object.values(results).forEach(r => {
-      if (r.type !== 'competitor' && r.type !== 'competitor_leader') {
-        Object.values(r.llmResults).forEach(lr => {
-          if (lr.confidenceScore && !lr.error) { total += lr.confidenceScore; count++; }
+      // Analyze company on each LLM
+      for (const llm of selectedLLMList) {
+        currentQuery++;
+        setProgress({ 
+          current: currentQuery, 
+          total: totalQueries, 
+          message: `Analyzing ${formData.companyName} on ${llm.name}...` 
         });
+        
+        const query = `Tell me about ${formData.companyName}${formData.industry ? ` in the ${formData.industry} industry` : ''}. ${formData.website ? `Their website is ${formData.website}.` : ''} ${formData.keywords ? `Focus on: ${formData.keywords}` : ''}`;
+        
+        const result = await analyzeQuery(query, llm.name, 'entity');
+        allResults.company[llm.id] = { llm, results: result };
       }
-    });
-    return count > 0 ? Math.round(total / count * 10) / 10 : 0;
-  };
 
-  const calculateCategoryScores = () => {
-    if (!results) return { company: 0, leadership: 0, keywords: 0 };
-    const s = { company: [], leadership: [], keywords: [] };
-    Object.values(results).forEach(r => {
-      if (r.type !== 'competitor' && r.type !== 'competitor_leader') {
-        Object.values(r.llmResults).forEach(lr => {
-          if (lr.confidenceScore && !lr.error) {
-            if (r.type === 'company' || r.type === 'website') s.company.push(lr.confidenceScore);
-            else if (r.type === 'leader') s.leadership.push(lr.confidenceScore);
-            else if (r.type === 'keyword') s.keywords.push(lr.confidenceScore);
-          }
-        });
-      }
-    });
-    const avg = arr => arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10 : 0;
-    return { company: avg(s.company), leadership: avg(s.leadership), keywords: avg(s.keywords) };
-  };
-
-  const getLeadershipScores = () => {
-    if (!results) return [];
-    const leaderScores = [];
-    Object.entries(results).forEach(([label, r]) => {
-      if (r.type === 'leader') {
-        let totalSentiment = 0, count = 0;
-        Object.values(r.llmResults).forEach(lr => {
-          if (lr.sentimentScore && !lr.error) { totalSentiment += lr.sentimentScore; count++; }
-        });
-        const avgSentiment = count > 0 ? Math.round(totalSentiment / count * 10) / 10 : 5;
-        leaderScores.push({ name: label.replace(':', ' -'), score: avgSentiment });
-      }
-    });
-    return leaderScores;
-  };
-
-  const getBacklinkComparison = () => {
-    if (!results) return { userBacklinks: [], competitorBacklinks: [], missingBacklinks: [] };
-    
-    const userBacklinks = new Set();
-    const competitorBacklinks = [];
-    
-    Object.entries(results).forEach(([label, r]) => {
-      if (r.type === 'website') {
-        Object.values(r.llmResults).forEach(lr => {
-          lr.backlinks?.forEach(bl => userBacklinks.add(bl.url));
-        });
-      }
-      if (r.type === 'competitor') {
-        Object.values(r.llmResults).forEach(lr => {
-          lr.backlinks?.forEach(bl => {
-            if (!userBacklinks.has(bl.url)) {
-              competitorBacklinks.push({ ...bl, competitor: label });
-            }
+      // Analyze leadership
+      for (const leader of formData.leadership.filter(l => l.name)) {
+        const leaderResults = { name: leader.name, title: leader.title, byLLM: {} };
+        
+        for (const llm of selectedLLMList) {
+          currentQuery++;
+          setProgress({ 
+            current: currentQuery, 
+            total: totalQueries, 
+            message: `Analyzing ${leader.name} on ${llm.name}...` 
           });
-        });
-      }
-    });
-    
-    // Sort by domain authority and get top 3
-    const sorted = competitorBacklinks.sort((a, b) => (b.domainAuthority || 0) - (a.domainAuthority || 0));
-    return { missingBacklinks: sorted.slice(0, 3) };
-  };
-
-  const getRecommendations = () => {
-    if (!results) return { press: [], podcasts: [], backlinks: [] };
-    
-    const press = [], podcasts = [], backlinks = [];
-    
-    Object.values(results).forEach(r => {
-      Object.values(r.llmResults).forEach(lr => {
-        lr.pressOpportunities?.forEach(p => {
-          if (!press.find(x => x.outlet === p.outlet)) press.push(p);
-        });
-        lr.podcastOpportunities?.forEach(p => {
-          if (!podcasts.find(x => x.name === p.name)) podcasts.push(p);
-        });
-        lr.backlinks?.forEach(b => {
-          if (r.type === 'competitor' && !backlinks.find(x => x.url === b.url)) {
-            backlinks.push(b);
-          }
-        });
-      });
-    });
-    
-    return { press: press.slice(0, 5), podcasts: podcasts.slice(0, 5), backlinks: backlinks.slice(0, 5) };
-  };
-
-  const getOverallStatus = () => {
-    const score = calculateOverallScore();
-    if (score >= 8) return { color: '#10B981', bg: '#10B98122', label: 'Excellent', description: 'Your entity presence is strong across AI search engines.' };
-    if (score >= 6) return { color: '#3B82F6', bg: '#3B82F622', label: 'Good', description: 'Solid foundation with room for optimization.' };
-    if (score >= 4) return { color: '#F59E0B', bg: '#F59E0B22', label: 'Needs Work', description: 'Moderate visibility - focused effort required.' };
-    if (score >= 2) return { color: '#F97316', bg: '#F9731622', label: 'Poor', description: 'Limited AI visibility - significant action needed.' };
-    return { color: '#EF4444', bg: '#EF444422', label: 'Critical', description: 'Your entity is not being recognized by AI search engines.' };
-  };
-
-  const getLLMScores = () => {
-    if (!results) return {};
-    const scores = {};
-    selectedLLMs.forEach(id => {
-      const arr = [];
-      Object.values(results).forEach(r => {
-        if (r.type !== 'competitor' && r.type !== 'competitor_leader') {
-          if (r.llmResults[id]?.confidenceScore && !r.llmResults[id]?.error) arr.push(r.llmResults[id].confidenceScore);
+          
+          const query = `Tell me about ${leader.name}${leader.title ? `, ${leader.title}` : ''} at ${formData.companyName}. What is their reputation, thought leadership, and online presence?`;
+          const result = await analyzeQuery(query, llm.name, 'leadership');
+          leaderResults.byLLM[llm.id] = { llm, results: result };
         }
+        
+        allResults.leadership.push(leaderResults);
+      }
+
+      // Analyze competitors
+      for (const competitor of formData.competitors.filter(c => c.name)) {
+        const competitorResults = { 
+          name: competitor.name, 
+          website: competitor.website,
+          byLLM: {},
+          leadership: null,
+          semrushData: null
+        };
+
+        // Fetch SEMRush for competitor
+        if (competitor.website) {
+          const compSemrush = await fetchSemrushData(competitor.website);
+          competitorResults.semrushData = compSemrush?.data || null;
+        }
+        
+        for (const llm of selectedLLMList) {
+          currentQuery++;
+          setProgress({ 
+            current: currentQuery, 
+            total: totalQueries, 
+            message: `Analyzing ${competitor.name} on ${llm.name}...` 
+          });
+          
+          const query = `Analyze ${competitor.name}${competitor.website ? ` (${competitor.website})` : ''} as a competitor. What is their online presence, backlink profile, and content strategy?`;
+          const result = await analyzeQuery(query, llm.name, 'competitor');
+          competitorResults.byLLM[llm.id] = { llm, results: result };
+        }
+
+        // Competitor leadership
+        if (competitor.leadership?.name) {
+          const leaderResults = { name: competitor.leadership.name, title: competitor.leadership.title, byLLM: {} };
+          for (const llm of selectedLLMList) {
+            currentQuery++;
+            setProgress({ current: currentQuery, total: totalQueries, message: `Analyzing ${competitor.leadership.name}...` });
+            const query = `Tell me about ${competitor.leadership.name}${competitor.leadership.title ? `, ${competitor.leadership.title}` : ''} at ${competitor.name}.`;
+            const result = await analyzeQuery(query, llm.name, 'leadership');
+            leaderResults.byLLM[llm.id] = { llm, results: result };
+          }
+          competitorResults.leadership = leaderResults;
+        }
+        
+        allResults.competitors.push(competitorResults);
+      }
+
+      addLog('Analysis complete', allResults);
+      setResults(allResults);
+      
+    } catch (err) {
+      addLog(`Analysis error: ${err.message}`);
+      setError(`Analysis failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+      setProgress({ current: 0, total: 0, message: '' });
+    }
+  };
+
+  // Send email report
+  const sendEmailReport = async () => {
+    if (!emailForm.name || !emailForm.company || !emailForm.email) {
+      setEmailStatus({ type: 'error', message: 'All fields are required' });
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailForm.email)) {
+      setEmailStatus({ type: 'error', message: 'Please enter a valid email address' });
+      return;
+    }
+
+    setEmailSending(true);
+    setEmailStatus(null);
+
+    try {
+      const response = await fetch('/api/send-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipientName: emailForm.name,
+          recipientCompany: emailForm.company,
+          recipientEmail: emailForm.email,
+          reportData: {
+            ...results,
+            semrushData: semrushData
+          }
+        })
       });
-      scores[id] = arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10 : 0;
-    });
-    return scores;
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Failed to send email');
+      }
+
+      setEmailStatus({ type: 'success', message: `Report sent to ${emailForm.email}!` });
+      setTimeout(() => {
+        setShowEmailModal(false);
+        setEmailStatus(null);
+        setEmailForm({ name: '', company: '', email: '' });
+      }, 3000);
+
+    } catch (err) {
+      setEmailStatus({ type: 'error', message: err.message });
+    } finally {
+      setEmailSending(false);
+    }
   };
 
-  const getScoreColor = (s) => s >= 7 ? '#10B981' : s >= 4 ? '#F59E0B' : '#EF4444';
-  const getResultsByType = (type) => results ? Object.entries(results).filter(([_, v]) => v.type === type) : [];
-
-  const exportToCSV = () => {
-    if (!results) return;
-    let csv = 'Entity,Type,LLM,Score,Sentiment,Found,Summary\n';
-    Object.entries(results).forEach(([label, r]) => {
-      Object.entries(r.llmResults).forEach(([llmId, lr]) => {
-        csv += `"${label}","${r.type}","${llmOptions.find(l => l.id === llmId)?.name}",${lr.confidenceScore || 0},${lr.sentimentScore || 0},${lr.entityFound || false},"${(lr.summary || '').replace(/"/g, '""')}"\n`;
-      });
-    });
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `entity-seo-${formData.companyName || 'report'}-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+  // Helper functions
+  const getScoreColor = (score) => {
+    if (score >= 8) return '#22c55e';
+    if (score >= 6) return '#3b82f6';
+    if (score >= 4) return '#eab308';
+    if (score >= 2) return '#f97316';
+    return '#ef4444';
   };
 
-  const exportToPDF = () => {
-    const scores = calculateCategoryScores();
-    const overall = calculateOverallScore();
-    const status = getOverallStatus();
-    const recommendations = getRecommendations();
-    const leaderScores = getLeadershipScores();
-    
-    const html = `<!DOCTYPE html><html><head><title>Entity SEO Report - ${formData.companyName}</title>
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:40px;max-width:900px;margin:auto;color:#1B1B1B;line-height:1.6}
-      .header{background:linear-gradient(135deg,#E85D04,#F48C06);color:white;padding:40px;border-radius:16px;margin-bottom:30px;text-align:center}
-      .header h1{font-size:28px;margin-bottom:8px}
-      .header p{opacity:0.9}
-      .status-banner{background:${status.bg};border:2px solid ${status.color};border-radius:12px;padding:24px;margin-bottom:30px;text-align:center}
-      .status-banner h2{color:${status.color};font-size:24px;margin-bottom:8px}
-      .scores{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}
-      .score-box{background:#f8f9fa;padding:24px;border-radius:12px;text-align:center}
-      .score-box .num{font-size:36px;font-weight:700}
-      .score-box .label{font-size:12px;color:#666;margin-top:4px;text-transform:uppercase}
-      .section{margin:30px 0}
-      .section h2{font-size:20px;border-bottom:3px solid #E85D04;padding-bottom:8px;margin-bottom:20px}
-      .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:16px}
-      .card h3{font-size:16px;margin-bottom:12px;color:#1B1B1B}
-      .recommendation{background:#FFF7ED;border-left:4px solid #E85D04;padding:16px;margin-bottom:12px;border-radius:0 8px 8px 0}
-      .leader-score{display:flex;justify-content:space-between;align-items:center;padding:12px;background:#f8f9fa;border-radius:8px;margin-bottom:8px}
-      .footer{text-align:center;margin-top:40px;padding-top:20px;border-top:2px solid #e5e7eb;color:#666}
-      .footer img{height:40px;margin-bottom:12px}
-      @media print{body{padding:20px}.header{break-inside:avoid}}
-    </style></head><body>
-    <div class="header">
-      <h1>Entity-Based SEO Report</h1>
-      <p>${formData.companyName || 'Company Analysis'} | Generated ${new Date().toLocaleDateString()}</p>
-    </div>
-    
-    <div class="status-banner">
-      <h2>${status.label}</h2>
-      <p>${status.description}</p>
-    </div>
-    
-    <div class="scores">
-      <div class="score-box"><div class="num" style="color:${getScoreColor(overall)}">${overall}</div><div class="label">Overall Score</div></div>
-      <div class="score-box"><div class="num" style="color:${getScoreColor(scores.company)}">${scores.company}</div><div class="label">Company</div></div>
-      <div class="score-box"><div class="num" style="color:${getScoreColor(scores.leadership)}">${scores.leadership}</div><div class="label">Leadership</div></div>
-      <div class="score-box"><div class="num" style="color:${getScoreColor(scores.keywords)}">${scores.keywords}</div><div class="label">Keywords</div></div>
-    </div>
-
-    ${leaderScores.length > 0 ? `
-    <div class="section">
-      <h2>Leadership Sentiment Scores</h2>
-      ${leaderScores.map(l => `<div class="leader-score"><span>${l.name}</span><span style="color:${getScoreColor(l.score)};font-weight:700">${l.score}/10</span></div>`).join('')}
-    </div>` : ''}
-
-    <div class="section">
-      <h2>Recommended Actions</h2>
-      ${recommendations.press.length > 0 ? `<div class="card"><h3>🎯 Press Opportunities</h3>${recommendations.press.map(p => `<div class="recommendation"><strong>${p.outlet}</strong> - ${p.type} (${p.relevance} relevance)</div>`).join('')}</div>` : ''}
-      ${recommendations.podcasts.length > 0 ? `<div class="card"><h3>🎙️ Podcast Opportunities</h3>${recommendations.podcasts.map(p => `<div class="recommendation"><strong>${p.name}</strong> - ${p.topic}</div>`).join('')}</div>` : ''}
-      ${recommendations.backlinks.length > 0 ? `<div class="card"><h3>🔗 Backlink Opportunities</h3>${recommendations.backlinks.map(b => `<div class="recommendation"><strong>${b.url}</strong> - DA: ${b.domainAuthority || 'N/A'}</div>`).join('')}</div>` : ''}
-    </div>
-
-    <div class="footer">
-      <p><strong>Abstrakt Marketing Group</strong></p>
-      <p>Entity SEO Checker | AI Search Visibility Analysis</p>
-      <p style="margin-top:12px;font-size:12px">Ready to improve your AI visibility? Contact us at abstraktmg.com</p>
-    </div>
-    </body></html>`;
-    
-    const w = window.open('', '_blank'); w.document.write(html); w.document.close(); w.print();
+  const getScoreLabel = (score) => {
+    if (score >= 8) return 'Excellent';
+    if (score >= 6) return 'Good';
+    if (score >= 4) return 'Needs Work';
+    if (score >= 2) return 'Poor';
+    return 'Critical';
   };
 
-  const submitStrategyRequest = async () => {
-    const data = { 
-      timestamp: new Date().toISOString(), 
-      ...strategyForm, 
-      scores: results ? { overall: calculateOverallScore(), ...calculateCategoryScores() } : null 
-    };
-    console.log('Strategy Request:', data);
-    setStrategySubmitted(true);
-    setTimeout(() => { 
-      setShowStrategyModal(false); 
-      setStrategySubmitted(false); 
-      setStrategyForm({ name: '', email: '', phone: '', company: '', website: '', goals: '', budget: '', timeline: '', currentChallenges: '', competitors: '' }); 
-    }, 3000);
+  const calculateAvgScore = (byLLM) => {
+    const scores = Object.values(byLLM || {})
+      .map(r => r.results?.confidenceScore || 0)
+      .filter(s => s > 0);
+    if (scores.length === 0) return 0;
+    return (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1);
   };
 
   // Styles
-  const inputStyle = { 
-    width: '100%', 
-    padding: '14px 18px', 
-    background: '#FFFFFF', 
-    border: '2px solid #E5E7EB', 
-    borderRadius: '10px', 
-    color: '#1B1B1B', 
-    fontSize: '15px', 
-    boxSizing: 'border-box',
-    transition: 'border-color 0.2s ease'
-  };
-  const labelStyle = { 
-    display: 'block', 
-    fontSize: '13px', 
-    fontWeight: '600', 
-    color: '#4B5563', 
-    marginBottom: '8px', 
-    textTransform: 'uppercase', 
-    letterSpacing: '0.5px' 
+  const styles = {
+    container: {
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+      fontFamily: '"Source Sans 3", "Segoe UI", sans-serif',
+      color: '#e8e8e8',
+      padding: '20px'
+    },
+    card: {
+      background: 'rgba(255,255,255,0.05)',
+      borderRadius: '12px',
+      border: '1px solid rgba(255,255,255,0.1)',
+      padding: '24px',
+      marginBottom: '20px'
+    },
+    input: {
+      width: '100%',
+      padding: '12px 16px',
+      borderRadius: '8px',
+      border: '1px solid rgba(255,255,255,0.2)',
+      background: 'rgba(0,0,0,0.3)',
+      color: '#fff',
+      fontSize: '14px',
+      marginTop: '8px',
+      boxSizing: 'border-box'
+    },
+    button: {
+      background: 'linear-gradient(135deg, #E85D04 0%, #F48C06 100%)',
+      color: '#fff',
+      border: 'none',
+      padding: '14px 28px',
+      borderRadius: '8px',
+      fontSize: '16px',
+      fontWeight: '600',
+      cursor: 'pointer'
+    },
+    buttonSecondary: {
+      background: 'rgba(255,255,255,0.1)',
+      color: '#fff',
+      border: '1px solid rgba(255,255,255,0.2)',
+      padding: '10px 20px',
+      borderRadius: '8px',
+      fontSize: '14px',
+      cursor: 'pointer'
+    },
+    modal: {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0,0,0,0.8)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000
+    },
+    modalContent: {
+      background: '#1a1a2e',
+      borderRadius: '16px',
+      padding: '32px',
+      maxWidth: '450px',
+      width: '90%',
+      border: '1px solid rgba(255,255,255,0.1)'
+    }
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F9FAFB', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: '#1B1B1B' }}>
-      <style>{`
-        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-        @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-        input:focus,textarea:focus,select:focus{outline:none;border-color:#E85D04!important;box-shadow:0 0 0 3px rgba(232,93,4,0.15)!important}
-        .hover-lift:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(0,0,0,0.1)}
-      `}</style>
-      
-      {/* Header */}
-      <header style={{ background: 'linear-gradient(135deg, #1B1B1B 0%, #2D2D2D 100%)', padding: '20px 48px', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-        <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ width: '44px', height: '44px', background: 'linear-gradient(135deg, #E85D04 0%, #F48C06 100%)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: '24px', fontWeight: '800', color: '#FFF' }}>A</span>
+    <div style={styles.container}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+          <h1 style={{ 
+            fontSize: '32px', 
+            fontWeight: '700',
+            background: 'linear-gradient(90deg, #E85D04, #F48C06)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '8px'
+          }}>
+            Entity SEO Checker
+          </h1>
+          <p style={{ color: 'rgba(255,255,255,0.6)' }}>
+            AI Search Visibility & Backlink Analysis by Abstrakt Marketing Group
+          </p>
+          <div style={{ marginTop: '12px' }}>
+            <button
+              onClick={() => setDebugMode(!debugMode)}
+              style={{ ...styles.buttonSecondary, fontSize: '12px', padding: '6px 12px' }}
+            >
+              {debugMode ? '🔧 Debug ON' : '🔧 Debug'}
+            </button>
+          </div>
+        </div>
+
+        {/* Error Display */}
+        {error && (
+          <div style={{ 
+            background: 'rgba(239, 68, 68, 0.2)', 
+            border: '1px solid #ef4444', 
+            borderRadius: '8px', 
+            padding: '16px', 
+            marginBottom: '20px' 
+          }}>
+            ❌ {error}
+          </div>
+        )}
+
+        {/* Company Information */}
+        <div style={styles.card}>
+          <h2 style={{ marginBottom: '20px', color: '#F48C06' }}>Company Information</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
+            <div>
+              <label>Company Name *</label>
+              <input
+                type="text"
+                name="companyName"
+                value={formData.companyName}
+                onChange={handleInputChange}
+                placeholder="e.g., Abstrakt Marketing Group"
+                style={styles.input}
+              />
+            </div>
+            <div>
+              <label>Website (for SEMRush data)</label>
+              <input
+                type="text"
+                name="website"
+                value={formData.website}
+                onChange={handleInputChange}
+                placeholder="e.g., abstraktmg.com"
+                style={styles.input}
+              />
+            </div>
+            <div>
+              <label>Industry</label>
+              <input
+                type="text"
+                name="industry"
+                value={formData.industry}
+                onChange={handleInputChange}
+                placeholder="e.g., B2B Marketing"
+                style={styles.input}
+              />
+            </div>
+            <div>
+              <label>Target Keywords</label>
+              <input
+                type="text"
+                name="keywords"
+                value={formData.keywords}
+                onChange={handleInputChange}
+                placeholder="e.g., SEO, lead generation"
+                style={styles.input}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Leadership */}
+        <div style={styles.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h2 style={{ color: '#F48C06', margin: 0 }}>Leadership Team</h2>
+            {formData.leadership.length < 3 && (
+              <button onClick={addLeadership} style={styles.buttonSecondary}>+ Add</button>
+            )}
+          </div>
+          {formData.leadership.map((leader, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '12px', marginBottom: '12px', alignItems: 'end' }}>
+              <div>
+                <label>Name</label>
+                <input
+                  type="text"
+                  value={leader.name}
+                  onChange={(e) => handleLeadershipChange(i, 'name', e.target.value)}
+                  placeholder="Full name"
+                  style={styles.input}
+                />
               </div>
               <div>
-                <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '700', color: '#FFFFFF' }}>Entity SEO Checker</h1>
-                <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>by Abstrakt Marketing Group</p>
+                <label>Title</label>
+                <input
+                  type="text"
+                  value={leader.title}
+                  onChange={(e) => handleLeadershipChange(i, 'title', e.target.value)}
+                  placeholder="Job title"
+                  style={styles.input}
+                />
               </div>
+              {formData.leadership.length > 1 && (
+                <button onClick={() => removeLeadership(i)} style={{ ...styles.buttonSecondary, padding: '12px', marginTop: '8px' }}>✕</button>
+              )}
             </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            {results && (
-              <>
-                <button onClick={exportToCSV} className="hover-lift" style={{ padding: '10px 20px', background: 'transparent', border: '2px solid rgba(255,255,255,0.3)', borderRadius: '8px', color: '#FFF', fontSize: '14px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s ease' }}>📊 Export CSV</button>
-                <button onClick={exportToPDF} className="hover-lift" style={{ padding: '10px 20px', background: 'transparent', border: '2px solid rgba(255,255,255,0.3)', borderRadius: '8px', color: '#FFF', fontSize: '14px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s ease' }}>📄 Export PDF</button>
-              </>
+          ))}
+        </div>
+
+        {/* Competitors */}
+        <div style={styles.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h2 style={{ color: '#F48C06', margin: 0 }}>Competitors (for gap analysis)</h2>
+            {formData.competitors.length < 3 && (
+              <button onClick={addCompetitor} style={styles.buttonSecondary}>+ Add</button>
             )}
-            <button onClick={() => setShowStrategyModal(true)} className="hover-lift" style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #E85D04 0%, #F48C06 100%)', border: 'none', borderRadius: '8px', color: '#FFF', fontSize: '14px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s ease' }}>🚀 Get AI Strategy</button>
           </div>
+          {formData.competitors.map((comp, i) => (
+            <div key={i} style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <strong>Competitor {i + 1}</strong>
+                <button onClick={() => removeCompetitor(i)} style={styles.buttonSecondary}>Remove</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <div>
+                  <label>Company</label>
+                  <input type="text" value={comp.name} onChange={(e) => handleCompetitorChange(i, 'name', e.target.value)} placeholder="Name" style={styles.input} />
+                </div>
+                <div>
+                  <label>Website</label>
+                  <input type="text" value={comp.website} onChange={(e) => handleCompetitorChange(i, 'website', e.target.value)} placeholder="website.com" style={styles.input} />
+                </div>
+                <div>
+                  <label>Leader Name</label>
+                  <input type="text" value={comp.leadership.name} onChange={(e) => handleCompetitorChange(i, 'leadership.name', e.target.value)} placeholder="CEO name" style={styles.input} />
+                </div>
+                <div>
+                  <label>Leader Title</label>
+                  <input type="text" value={comp.leadership.title} onChange={(e) => handleCompetitorChange(i, 'leadership.title', e.target.value)} placeholder="Title" style={styles.input} />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
-      </header>
 
-      <main style={{ maxWidth: '1400px', margin: '0 auto', padding: '40px 48px' }}>
-        {/* Input Form */}
-        <div style={{ background: '#FFFFFF', borderRadius: '20px', border: '1px solid #E5E7EB', padding: '40px', marginBottom: '40px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
-          
-          {/* LLM Selection */}
-          <div style={{ marginBottom: '32px' }}>
-            <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '700', color: '#1B1B1B' }}>🤖 Select AI Search Engines to Test</h3>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-              {llmOptions.map(llm => (
-                <button key={llm.id} onClick={() => toggleLLM(llm.id)} className="hover-lift" style={{ 
-                  padding: '12px 20px', 
-                  background: selectedLLMs.includes(llm.id) ? `${llm.color}15` : '#F9FAFB', 
-                  border: `2px solid ${selectedLLMs.includes(llm.id) ? llm.color : '#E5E7EB'}`, 
-                  borderRadius: '10px', 
-                  color: selectedLLMs.includes(llm.id) ? llm.color : '#6B7280', 
-                  fontSize: '14px', 
-                  fontWeight: '500', 
-                  cursor: 'pointer', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '8px',
-                  transition: 'all 0.2s ease'
-                }}>
-                  <span>{llm.icon}</span>{llm.name}
-                  {selectedLLMs.includes(llm.id) && <span style={{ width: '20px', height: '20px', background: llm.color, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: '#fff' }}>✓</span>}
-                </button>
-              ))}
-            </div>
-            <p style={{ margin: '12px 0 0 0', fontSize: '13px', color: '#6B7280' }}>💡 Start with 2 engines to minimize API costs. Add more for comprehensive analysis.</p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '40px' }}>
-            {/* Left Column */}
-            <div>
-              <h2 style={{ margin: '0 0 24px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '32px', height: '32px', background: 'linear-gradient(135deg, #E85D04, #F48C06)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', fontSize: '14px' }}>1</span>
-                Your Company
-              </h2>
-
-              <div style={{ marginBottom: '20px' }}>
-                <label style={labelStyle}>Company Name *</label>
-                <input type="text" value={formData.companyName} onChange={(e) => handleInputChange('companyName', e.target.value)} placeholder="e.g., Abstrakt Marketing Group" style={inputStyle} />
+        {/* LLM Selection */}
+        <div style={styles.card}>
+          <h2 style={{ marginBottom: '20px', color: '#F48C06' }}>AI Search Engines</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+            {llmOptions.map(llm => (
+              <div
+                key={llm.id}
+                onClick={() => setSelectedLLMs(prev => ({ ...prev, [llm.id]: !prev[llm.id] }))}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '20px',
+                  border: `2px solid ${selectedLLMs[llm.id] ? llm.color : 'rgba(255,255,255,0.2)'}`,
+                  background: selectedLLMs[llm.id] ? `${llm.color}20` : 'transparent',
+                  color: selectedLLMs[llm.id] ? llm.color : 'rgba(255,255,255,0.6)',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                {selectedLLMs[llm.id] ? '✓ ' : ''}{llm.name}
               </div>
-              <div style={{ marginBottom: '20px' }}>
-                <label style={labelStyle}>Website URL</label>
-                <input type="url" value={formData.websiteUrl} onChange={(e) => handleInputChange('websiteUrl', e.target.value)} placeholder="e.g., https://www.abstraktmg.com" style={inputStyle} />
-              </div>
-
-              <h3 style={{ margin: '32px 0 16px 0', fontSize: '16px', fontWeight: '600', color: '#1B1B1B' }}>👥 Leadership Team (up to 3)</h3>
-              {formData.leaders.map((leader, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                  <input type="text" value={leader.name} onChange={(e) => handleLeaderChange(i, 'name', e.target.value)} placeholder={`Leader ${i + 1} Name`} style={{ ...inputStyle, padding: '12px 14px' }} />
-                  <input type="text" value={leader.role} onChange={(e) => handleLeaderChange(i, 'role', e.target.value)} placeholder="Role (CEO, CMO...)" style={{ ...inputStyle, padding: '12px 14px' }} />
-                </div>
-              ))}
-
-              <h3 style={{ margin: '32px 0 16px 0', fontSize: '16px', fontWeight: '600', color: '#1B1B1B' }}>🔍 Target Keywords (up to 3)</h3>
-              {formData.keywords.map((keyword, i) => (
-                <input key={i} type="text" value={keyword} onChange={(e) => handleKeywordChange(i, e.target.value)} placeholder={`Keyword ${i + 1}`} style={{ ...inputStyle, marginBottom: '12px' }} />
-              ))}
-            </div>
-
-            {/* Right Column - Competitors */}
-            <div>
-              <h2 style={{ margin: '0 0 24px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '32px', height: '32px', background: 'linear-gradient(135deg, #6B7280, #9CA3AF)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', fontSize: '14px' }}>2</span>
-                Competitors (Optional)
-              </h2>
-
-              {formData.competitors.map((comp, i) => (
-                <div key={i} style={{ background: '#F9FAFB', borderRadius: '12px', padding: '16px', marginBottom: '16px', border: '1px solid #E5E7EB' }}>
-                  <label style={{ ...labelStyle, fontSize: '12px' }}>Competitor {i + 1} Website</label>
-                  <input type="url" value={comp.url} onChange={(e) => handleCompetitorChange(i, 'url', e.target.value)} placeholder="https://competitor.com" style={{ ...inputStyle, marginBottom: '12px', background: '#FFF' }} />
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    <input type="text" value={comp.leaderName} onChange={(e) => handleCompetitorChange(i, 'leaderName', e.target.value)} placeholder="Leader Name (optional)" style={{ ...inputStyle, padding: '10px 12px', fontSize: '13px', background: '#FFF' }} />
-                    <input type="text" value={comp.leaderRole} onChange={(e) => handleCompetitorChange(i, 'leaderRole', e.target.value)} placeholder="Role" style={{ ...inputStyle, padding: '10px 12px', fontSize: '13px', background: '#FFF' }} />
-                  </div>
-                </div>
-              ))}
-            </div>
+            ))}
           </div>
+          <p style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>
+            💡 Fewer LLMs = lower API costs. ChatGPT + Gemini recommended for most analyses.
+          </p>
+        </div>
 
-          <button onClick={runAnalysis} disabled={isAnalyzing} className="hover-lift" style={{ 
-            width: '100%', 
-            padding: '18px 32px', 
-            background: isAnalyzing ? '#9CA3AF' : 'linear-gradient(135deg, #E85D04 0%, #F48C06 100%)', 
-            border: 'none', 
-            borderRadius: '12px', 
-            color: '#FFF', 
-            fontSize: '16px', 
-            fontWeight: '700', 
-            cursor: isAnalyzing ? 'not-allowed' : 'pointer', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            gap: '12px',
-            marginTop: '32px',
-            boxShadow: isAnalyzing ? 'none' : '0 4px 15px rgba(232,93,4,0.35)',
-            transition: 'all 0.2s ease'
-          }}>
-            {isAnalyzing ? <><div style={{ width: '20px', height: '20px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>Analyzing...</> : <>🚀 Run Entity Analysis</>}
+        {/* Run Button */}
+        <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+          <button
+            onClick={runAnalysis}
+            disabled={loading || !formData.companyName}
+            style={{
+              ...styles.button,
+              opacity: (loading || !formData.companyName) ? 0.5 : 1,
+              cursor: (loading || !formData.companyName) ? 'not-allowed' : 'pointer',
+              minWidth: '200px'
+            }}
+          >
+            {loading ? `Analyzing... (${progress.current}/${progress.total})` : 'Run Analysis'}
           </button>
-
-          {/* Progress Bar */}
-          {isAnalyzing && progress.total > 0 && (
-            <div style={{ marginTop: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '14px', color: '#6B7280' }}>
-                <span>{progress.message}</span>
-                <span>{progress.current} / {progress.total}</span>
-              </div>
-              <div style={{ height: '8px', background: '#E5E7EB', borderRadius: '4px', overflow: 'hidden' }}>
-                <div style={{ width: `${(progress.current / progress.total) * 100}%`, height: '100%', background: 'linear-gradient(90deg, #E85D04 0%, #F48C06 100%)', borderRadius: '4px', transition: 'width 0.3s ease' }}></div>
-              </div>
-            </div>
+          {loading && progress.message && (
+            <p style={{ marginTop: '12px', color: '#F48C06' }}>{progress.message}</p>
           )}
-
-          {error && <div style={{ marginTop: '16px', padding: '16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', color: '#DC2626', fontSize: '14px' }}>{error}</div>}
         </div>
+
+        {/* Debug Logs */}
+        {debugMode && debugLogs.length > 0 && (
+          <div style={{ ...styles.card, background: 'rgba(0,0,0,0.5)', fontFamily: 'monospace', fontSize: '11px', maxHeight: '300px', overflow: 'auto' }}>
+            <h4 style={{ color: '#F48C06' }}>Debug Logs</h4>
+            {debugLogs.map((log, i) => (
+              <div key={i} style={{ borderBottom: '1px solid #333', paddingBottom: '4px', marginBottom: '4px' }}>
+                <span style={{ color: '#888' }}>[{log.ts}]</span> {log.msg}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Results */}
         {results && (
-          <div style={{ animation: 'fadeIn 0.5s ease' }}>
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', background: '#FFFFFF', padding: '8px', borderRadius: '12px', border: '1px solid #E5E7EB', width: 'fit-content' }}>
-              {[
-                { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-                { id: 'company', label: 'Company', icon: '🏢' },
-                { id: 'leader', label: 'Leadership', icon: '👥' },
-                { id: 'keyword', label: 'Keywords', icon: '🔍' },
-                { id: 'competitors', label: 'Competitors', icon: '⚔️' },
-                { id: 'recommendations', label: 'Recommendations', icon: '💡' }
-              ].map(tab => (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ 
-                  padding: '12px 20px', 
-                  background: activeTab === tab.id ? 'linear-gradient(135deg, #E85D04 0%, #F48C06 100%)' : 'transparent', 
-                  border: 'none', 
-                  borderRadius: '8px', 
-                  color: activeTab === tab.id ? '#FFF' : '#6B7280', 
-                  fontSize: '14px', 
-                  fontWeight: '500', 
-                  cursor: 'pointer', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '6px',
-                  transition: 'all 0.2s ease'
-                }}><span>{tab.icon}</span>{tab.label}</button>
-              ))}
+          <>
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+              <button onClick={() => setShowEmailModal(true)} style={styles.button}>
+                📧 Email My Report
+              </button>
             </div>
 
-            {/* Dashboard Tab */}
-            {activeTab === 'dashboard' && (
-              <div>
-                {/* Status Banner */}
-                {(() => {
-                  const status = getOverallStatus();
-                  return (
-                    <div style={{ background: status.bg, border: `2px solid ${status.color}`, borderRadius: '16px', padding: '32px', marginBottom: '24px', textAlign: 'center' }}>
-                      <h2 style={{ margin: '0 0 8px 0', fontSize: '28px', fontWeight: '700', color: status.color }}>{status.label}</h2>
-                      <p style={{ margin: 0, fontSize: '16px', color: '#4B5563' }}>{status.description}</p>
+            {/* SEMRush Data Card */}
+            {semrushData && (
+              <div style={styles.card}>
+                <h2 style={{ marginBottom: '20px', color: '#F48C06' }}>📊 SEMRush Backlink Data</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px' }}>
+                  {semrushData.authorityScore !== undefined && (
+                    <div style={{ background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '32px', fontWeight: '700', color: getScoreColor(semrushData.authorityScore / 10) }}>
+                        {semrushData.authorityScore}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Authority Score</div>
                     </div>
-                  );
-                })()}
-
-                {/* Score Cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '24px' }}>
-                  {[
-                    { label: 'Overall Score', score: calculateOverallScore(), icon: '📈' },
-                    { label: 'Company', score: calculateCategoryScores().company, icon: '🏢' },
-                    { label: 'Leadership', score: calculateCategoryScores().leadership, icon: '👥' },
-                    { label: 'Keywords', score: calculateCategoryScores().keywords, icon: '🔍' }
-                  ].map(item => (
-                    <div key={item.label} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '28px', marginBottom: '8px' }}>{item.icon}</div>
-                      <div style={{ fontSize: '42px', fontWeight: '700', color: getScoreColor(item.score) }}>{item.score}</div>
-                      <div style={{ fontSize: '13px', color: '#6B7280', marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{item.label}</div>
-                    </div>
-                  ))}
+                  )}
+                  {semrushData.backlinks && (
+                    <>
+                      <div style={{ background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#3b82f6' }}>
+                          {semrushData.backlinks.total?.toLocaleString() || 0}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Total Backlinks</div>
+                      </div>
+                      <div style={{ background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#22c55e' }}>
+                          {semrushData.backlinks.referringDomains?.toLocaleString() || 0}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Referring Domains</div>
+                      </div>
+                      <div style={{ background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '8px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#eab308' }}>
+                          {semrushData.backlinks.followLinks?.toLocaleString() || 0}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Follow Links</div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Leadership Sentiment Scores */}
-                {getLeadershipScores().length > 0 && (
-                  <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>👤 Leadership Sentiment Scores</h3>
-                    <div style={{ display: 'grid', gap: '12px' }}>
-                      {getLeadershipScores().map((leader, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: '#F9FAFB', borderRadius: '10px' }}>
-                          <span style={{ fontWeight: '500' }}>{leader.name}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <div style={{ width: '120px', height: '8px', background: '#E5E7EB', borderRadius: '4px', overflow: 'hidden' }}>
-                              <div style={{ width: `${leader.score * 10}%`, height: '100%', background: getScoreColor(leader.score), borderRadius: '4px' }}></div>
+                {/* Top Backlinks */}
+                {semrushData.topBacklinks && semrushData.topBacklinks.length > 0 && (
+                  <div style={{ marginTop: '24px' }}>
+                    <h3 style={{ marginBottom: '12px', fontSize: '16px' }}>Top Referring Domains</h3>
+                    <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', overflow: 'hidden' }}>
+                      {semrushData.topBacklinks.slice(0, 10).map((link, i) => (
+                        <div key={i} style={{ 
+                          padding: '12px 16px', 
+                          borderBottom: i < 9 ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '13px', color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {link.sourceUrl}
                             </div>
-                            <span style={{ fontWeight: '700', color: getScoreColor(leader.score), minWidth: '45px' }}>{leader.score}/10</span>
+                            {link.anchor && (
+                              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                                Anchor: {link.anchor}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ 
+                            background: getScoreColor(link.authorityScore / 10),
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            marginLeft: '12px'
+                          }}>
+                            AS: {link.authorityScore}
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
+              </div>
+            )}
 
-                {/* LLM Comparison */}
-                <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', marginBottom: '24px' }}>
-                  <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>🤖 AI Engine Comparison</h3>
-                  <div style={{ display: 'grid', gap: '16px' }}>
-                    {Object.entries(getLLMScores()).map(([llmId, score]) => {
-                      const llm = llmOptions.find(l => l.id === llmId);
-                      return (
-                        <div key={llmId} style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                          <div style={{ width: '150px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '20px' }}>{llm?.icon}</span>
-                            <span style={{ fontSize: '14px', fontWeight: '500' }}>{llm?.name?.split(' ')[0]}</span>
+            {/* Company AI Visibility */}
+            <div style={styles.card}>
+              <h2 style={{ marginBottom: '20px', color: '#F48C06' }}>🤖 AI Search Visibility: {results.companyName}</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+                {Object.entries(results.company).map(([llmId, data]) => {
+                  const score = data.results?.confidenceScore || 0;
+                  const hasError = data.results?.error;
+                  
+                  return (
+                    <div key={llmId} style={{ 
+                      background: 'rgba(0,0,0,0.3)', 
+                      padding: '16px', 
+                      borderRadius: '8px',
+                      borderLeft: `4px solid ${hasError ? '#ef4444' : data.llm.color}`
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                        <strong style={{ color: data.llm.color }}>{data.llm.name}</strong>
+                        {!hasError && (
+                          <span style={{ 
+                            background: getScoreColor(score),
+                            padding: '4px 12px',
+                            borderRadius: '12px',
+                            fontSize: '12px',
+                            fontWeight: '600'
+                          }}>
+                            {score}/10 - {getScoreLabel(score)}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {hasError ? (
+                        <p style={{ color: '#ef4444' }}>❌ {data.results.errorMessage}</p>
+                      ) : (
+                        <>
+                          <p style={{ fontSize: '14px', marginBottom: '12px', color: 'rgba(255,255,255,0.8)' }}>
+                            {data.results?.summary}
+                          </p>
+                          {data.results?.recommendations && (
+                            <div style={{ background: 'rgba(248,140,6,0.1)', padding: '12px', borderRadius: '6px', fontSize: '13px' }}>
+                              <strong style={{ color: '#F48C06' }}>Recommendation:</strong><br />
+                              {data.results.recommendations}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Leadership */}
+            {results.leadership.length > 0 && (
+              <div style={styles.card}>
+                <h2 style={{ marginBottom: '20px', color: '#F48C06' }}>👤 Leadership Visibility</h2>
+                {results.leadership.map((leader, i) => (
+                  <div key={i} style={{ marginBottom: '20px' }}>
+                    <h3 style={{ marginBottom: '12px' }}>{leader.name} {leader.title && `- ${leader.title}`}</h3>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                      {Object.entries(leader.byLLM).map(([llmId, data]) => (
+                        <div key={llmId} style={{
+                          background: 'rgba(0,0,0,0.3)',
+                          padding: '12px 16px',
+                          borderRadius: '8px',
+                          borderLeft: `3px solid ${data.llm.color}`,
+                          minWidth: '120px'
+                        }}>
+                          <div style={{ fontSize: '12px', color: data.llm.color }}>{data.llm.name}</div>
+                          <div style={{ fontSize: '20px', fontWeight: '700', color: getScoreColor(data.results?.sentimentScore || 5) }}>
+                            {data.results?.sentimentScore || 5}/10
                           </div>
-                          <div style={{ flex: 1, height: '24px', background: '#F3F4F6', borderRadius: '12px', overflow: 'hidden' }}>
-                            <div style={{ width: `${score * 10}%`, height: '100%', background: llm?.color, borderRadius: '12px', transition: 'width 0.5s ease' }}></div>
-                          </div>
-                          <div style={{ width: '50px', textAlign: 'right', fontSize: '16px', fontWeight: '700', color: llm?.color }}>{score}/10</div>
+                          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)' }}>Sentiment</div>
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
                   </div>
+                ))}
+              </div>
+            )}
+
+            {/* Competitor Gap Analysis */}
+            {results.competitors.length > 0 && (
+              <div style={styles.card}>
+                <h2 style={{ marginBottom: '20px', color: '#F48C06' }}>⚔️ Competitor Backlink Gap Analysis</h2>
+                
+                {/* Comparison Table */}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
+                        <th style={{ padding: '12px', textAlign: 'left', color: '#F48C06' }}>Company</th>
+                        <th style={{ padding: '12px', textAlign: 'center' }}>Authority</th>
+                        <th style={{ padding: '12px', textAlign: 'center' }}>Backlinks</th>
+                        <th style={{ padding: '12px', textAlign: 'center' }}>Ref. Domains</th>
+                        <th style={{ padding: '12px', textAlign: 'center' }}>AI Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Your company row */}
+                      <tr style={{ background: 'rgba(248,140,6,0.1)' }}>
+                        <td style={{ padding: '12px', fontWeight: '600' }}>{results.companyName} (You)</td>
+                        <td style={{ padding: '12px', textAlign: 'center' }}>{semrushData?.authorityScore || '-'}</td>
+                        <td style={{ padding: '12px', textAlign: 'center' }}>{semrushData?.backlinks?.total?.toLocaleString() || '-'}</td>
+                        <td style={{ padding: '12px', textAlign: 'center' }}>{semrushData?.backlinks?.referringDomains?.toLocaleString() || '-'}</td>
+                        <td style={{ padding: '12px', textAlign: 'center' }}>
+                          <span style={{ color: getScoreColor(calculateAvgScore(results.company)) }}>
+                            {calculateAvgScore(results.company)}/10
+                          </span>
+                        </td>
+                      </tr>
+                      {/* Competitor rows */}
+                      {results.competitors.map((comp, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                          <td style={{ padding: '12px' }}>{comp.name}</td>
+                          <td style={{ padding: '12px', textAlign: 'center' }}>{comp.semrushData?.authorityScore || '-'}</td>
+                          <td style={{ padding: '12px', textAlign: 'center' }}>{comp.semrushData?.backlinks?.total?.toLocaleString() || '-'}</td>
+                          <td style={{ padding: '12px', textAlign: 'center' }}>{comp.semrushData?.backlinks?.referringDomains?.toLocaleString() || '-'}</td>
+                          <td style={{ padding: '12px', textAlign: 'center' }}>
+                            <span style={{ color: getScoreColor(calculateAvgScore(comp.byLLM)) }}>
+                              {calculateAvgScore(comp.byLLM)}/10
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
 
-                {/* Backlink Gap Analysis */}
-                {(() => {
-                  const { missingBacklinks } = getBacklinkComparison();
-                  return missingBacklinks.length > 0 ? (
-                    <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px' }}>
-                      <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>🔗 Backlinks You're Missing (vs Competitors)</h3>
-                      <div style={{ display: 'grid', gap: '12px' }}>
-                        {missingBacklinks.map((bl, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: '#FFF7ED', borderRadius: '10px', border: '1px solid #FDBA74' }}>
-                            <div>
-                              <a href={bl.url} target="_blank" rel="noopener noreferrer" style={{ color: '#E85D04', fontWeight: '500', textDecoration: 'none' }}>{bl.url}</a>
-                              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#6B7280' }}>Found on: {bl.competitor}</p>
-                            </div>
-                            <span style={{ background: '#E85D04', color: '#FFF', padding: '4px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>DA: {bl.domainAuthority || 'N/A'}</span>
+                {/* Competitor Top Backlinks */}
+                {results.competitors.map((comp, i) => (
+                  comp.semrushData?.topBacklinks && comp.semrushData.topBacklinks.length > 0 && (
+                    <div key={i} style={{ marginTop: '24px' }}>
+                      <h4 style={{ marginBottom: '8px', color: 'rgba(255,255,255,0.8)' }}>
+                        🔗 {comp.name}'s Top Backlinks (Gap Opportunities)
+                      </h4>
+                      <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '12px' }}>
+                        {comp.semrushData.topBacklinks.slice(0, 5).map((link, j) => (
+                          <div key={j} style={{ 
+                            padding: '8px 0', 
+                            borderBottom: j < 4 ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                            fontSize: '13px'
+                          }}>
+                            <span style={{ color: '#3b82f6' }}>{link.sourceUrl}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.5)', marginLeft: '8px' }}>
+                              (AS: {link.authorityScore})
+                            </span>
                           </div>
                         ))}
                       </div>
                     </div>
-                  ) : null;
-                })()}
-              </div>
-            )}
-
-            {/* Recommendations Tab */}
-            {activeTab === 'recommendations' && (
-              <div style={{ display: 'grid', gap: '24px' }}>
-                {(() => {
-                  const recs = getRecommendations();
-                  return (
-                    <>
-                      {/* Press Opportunities */}
-                      <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px' }}>
-                        <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>📰</span> Suggested Press Sources
-                        </h3>
-                        {recs.press.length > 0 ? (
-                          <div style={{ display: 'grid', gap: '12px' }}>
-                            {recs.press.map((p, i) => (
-                              <div key={i} style={{ padding: '16px', background: '#F0FDF4', borderLeft: '4px solid #10B981', borderRadius: '0 10px 10px 0' }}>
-                                <strong style={{ color: '#1B1B1B' }}>{p.outlet}</strong>
-                                <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#6B7280' }}>{p.type} • {p.relevance} relevance</p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p style={{ color: '#6B7280', fontStyle: 'italic' }}>Run analysis with competitor data to get press recommendations.</p>
-                        )}
-                      </div>
-
-                      {/* Podcast Opportunities */}
-                      <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px' }}>
-                        <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>🎙️</span> Podcast Guest Opportunities
-                        </h3>
-                        {recs.podcasts.length > 0 ? (
-                          <div style={{ display: 'grid', gap: '12px' }}>
-                            {recs.podcasts.map((p, i) => (
-                              <div key={i} style={{ padding: '16px', background: '#EFF6FF', borderLeft: '4px solid #3B82F6', borderRadius: '0 10px 10px 0' }}>
-                                <strong style={{ color: '#1B1B1B' }}>{p.name}</strong>
-                                <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#6B7280' }}>Topic: {p.topic} • Audience: {p.audienceSize}</p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p style={{ color: '#6B7280', fontStyle: 'italic' }}>Add leadership information to get podcast recommendations.</p>
-                        )}
-                      </div>
-
-                      {/* Backlink Opportunities */}
-                      <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px' }}>
-                        <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>🔗</span> Backlinks to Acquire (From Competitor Analysis)
-                        </h3>
-                        {recs.backlinks.length > 0 ? (
-                          <div style={{ display: 'grid', gap: '12px' }}>
-                            {recs.backlinks.map((b, i) => (
-                              <div key={i} style={{ padding: '16px', background: '#FFF7ED', borderLeft: '4px solid #E85D04', borderRadius: '0 10px 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div>
-                                  <a href={b.url} target="_blank" rel="noopener noreferrer" style={{ color: '#E85D04', fontWeight: '500', textDecoration: 'none' }}>{b.url}</a>
-                                  <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#6B7280' }}>Type: {b.type || 'Unknown'}</p>
-                                </div>
-                                <span style={{ background: '#E85D04', color: '#FFF', padding: '4px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}>DA: {b.domainAuthority || 'N/A'}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p style={{ color: '#6B7280', fontStyle: 'italic' }}>Add competitor URLs to discover backlink opportunities.</p>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-
-            {/* Company Tab */}
-            {activeTab === 'company' && (
-              <div style={{ display: 'grid', gap: '24px' }}>
-                {[...getResultsByType('company'), ...getResultsByType('website')].map(([label, result], idx) => (
-                  <div key={label} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', animation: `fadeIn 0.5s ease ${idx * 0.1}s both` }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>{label}</h3>
-                    <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#6B7280' }}>Query: "{result.query}"</p>
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(selectedLLMs.length, 3)}, 1fr)`, gap: '16px' }}>
-                      {Object.entries(result.llmResults).map(([llmId, lr]) => {
-                        const llm = llmOptions.find(l => l.id === llmId);
-                        return (
-                          <div key={llmId} style={{ background: '#F9FAFB', borderRadius: '12px', padding: '20px', border: `1px solid ${llm?.color}33` }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '18px' }}>{llm?.icon}</span>
-                                <span style={{ fontSize: '14px', fontWeight: '600', color: llm?.color }}>{llm?.name?.split(' ')[0]}</span>
-                              </div>
-                              <span style={{ background: `${getScoreColor(lr.confidenceScore)}22`, color: getScoreColor(lr.confidenceScore), padding: '4px 10px', borderRadius: '6px', fontSize: '13px', fontWeight: '700' }}>{lr.confidenceScore || 0}/10</span>
-                            </div>
-                            <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.6', color: '#4B5563' }}>{lr.summary}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  )
                 ))}
               </div>
             )}
+          </>
+        )}
 
-            {/* Leadership Tab */}
-            {activeTab === 'leader' && (
-              <div style={{ display: 'grid', gap: '24px' }}>
-                {getResultsByType('leader').map(([label, result], idx) => (
-                  <div key={label} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', animation: `fadeIn 0.5s ease ${idx * 0.1}s both` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                      <div>
-                        <h3 style={{ margin: '0 0 4px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>{label}</h3>
-                        <p style={{ margin: 0, fontSize: '13px', color: '#6B7280' }}>Sentiment Analysis</p>
-                      </div>
-                      {(() => {
-                        const avgSentiment = Object.values(result.llmResults).reduce((sum, lr) => sum + (lr.sentimentScore || 5), 0) / Object.values(result.llmResults).length;
-                        return (
-                          <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '32px', fontWeight: '700', color: getScoreColor(avgSentiment) }}>{Math.round(avgSentiment * 10) / 10}</div>
-                            <div style={{ fontSize: '12px', color: '#6B7280' }}>Sentiment</div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(selectedLLMs.length, 3)}, 1fr)`, gap: '16px' }}>
-                      {Object.entries(result.llmResults).map(([llmId, lr]) => {
-                        const llm = llmOptions.find(l => l.id === llmId);
-                        return (
-                          <div key={llmId} style={{ background: '#F9FAFB', borderRadius: '12px', padding: '20px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                              <span>{llm?.icon}</span>
-                              <span style={{ fontWeight: '600', color: llm?.color }}>{llm?.name?.split(' ')[0]}</span>
-                            </div>
-                            <p style={{ margin: 0, fontSize: '14px', color: '#4B5563' }}>{lr.summary}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+        {/* Email Modal */}
+        {showEmailModal && (
+          <div style={styles.modal} onClick={() => setShowEmailModal(false)}>
+            <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
+              <h2 style={{ marginBottom: '24px', color: '#F48C06' }}>📧 Email My Report</h2>
+              
+              <div style={{ marginBottom: '16px' }}>
+                <label>Your Name *</label>
+                <input
+                  type="text"
+                  value={emailForm.name}
+                  onChange={(e) => setEmailForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="John Smith"
+                  style={styles.input}
+                />
               </div>
-            )}
+              
+              <div style={{ marginBottom: '16px' }}>
+                <label>Company *</label>
+                <input
+                  type="text"
+                  value={emailForm.company}
+                  onChange={(e) => setEmailForm(prev => ({ ...prev, company: e.target.value }))}
+                  placeholder="Your Company Name"
+                  style={styles.input}
+                />
+              </div>
+              
+              <div style={{ marginBottom: '24px' }}>
+                <label>Email Address *</label>
+                <input
+                  type="email"
+                  value={emailForm.email}
+                  onChange={(e) => setEmailForm(prev => ({ ...prev, email: e.target.value }))}
+                  placeholder="you@company.com"
+                  style={styles.input}
+                />
+              </div>
 
-            {/* Keywords Tab */}
-            {activeTab === 'keyword' && (
-              <div style={{ display: 'grid', gap: '24px' }}>
-                {getResultsByType('keyword').map(([label, result], idx) => (
-                  <div key={label} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', animation: `fadeIn 0.5s ease ${idx * 0.1}s both` }}>
-                    <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>{label}</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(selectedLLMs.length, 3)}, 1fr)`, gap: '16px' }}>
-                      {Object.entries(result.llmResults).map(([llmId, lr]) => {
-                        const llm = llmOptions.find(l => l.id === llmId);
-                        return (
-                          <div key={llmId} style={{ background: '#F9FAFB', borderRadius: '12px', padding: '20px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>{llm?.icon} <strong style={{ color: llm?.color }}>{llm?.name?.split(' ')[0]}</strong></span>
-                              <span style={{ background: lr.entityFound ? '#10B98122' : '#EF444422', color: lr.entityFound ? '#10B981' : '#EF4444', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>{lr.entityFound ? 'Found' : 'Not Found'}</span>
-                            </div>
-                            <p style={{ margin: 0, fontSize: '14px', color: '#4B5563' }}>{lr.summary}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+              {emailStatus && (
+                <div style={{ 
+                  padding: '12px', 
+                  borderRadius: '8px', 
+                  marginBottom: '16px',
+                  background: emailStatus.type === 'error' ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.2)',
+                  color: emailStatus.type === 'error' ? '#ef4444' : '#22c55e'
+                }}>
+                  {emailStatus.type === 'success' ? '✅' : '❌'} {emailStatus.message}
+                </div>
+              )}
 
-            {/* Competitors Tab */}
-            {activeTab === 'competitors' && (
-              <div style={{ display: 'grid', gap: '24px' }}>
-                {[...getResultsByType('competitor'), ...getResultsByType('competitor_leader')].map(([label, result], idx) => (
-                  <div key={label} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E5E7EB', padding: '24px', animation: `fadeIn 0.5s ease ${idx * 0.1}s both` }}>
-                    <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '700', color: '#1B1B1B' }}>{label}</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(selectedLLMs.length, 2)}, 1fr)`, gap: '16px' }}>
-                      {Object.entries(result.llmResults).map(([llmId, lr]) => {
-                        const llm = llmOptions.find(l => l.id === llmId);
-                        return (
-                          <div key={llmId} style={{ background: '#F9FAFB', borderRadius: '12px', padding: '20px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                              {llm?.icon} <strong style={{ color: llm?.color }}>{llm?.name?.split(' ')[0]}</strong>
-                              <span style={{ marginLeft: 'auto', fontWeight: '700', color: getScoreColor(lr.confidenceScore) }}>{lr.confidenceScore}/10</span>
-                            </div>
-                            <p style={{ margin: 0, fontSize: '14px', color: '#4B5563' }}>{lr.summary}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-                {getResultsByType('competitor').length === 0 && (
-                  <div style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px dashed #E5E7EB', padding: '60px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚔️</div>
-                    <h3 style={{ margin: '0 0 8px 0', color: '#1B1B1B' }}>No Competitors Added</h3>
-                    <p style={{ margin: 0, color: '#6B7280' }}>Add competitor URLs above to compare your entity visibility.</p>
-                  </div>
-                )}
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={sendEmailReport}
+                  disabled={emailSending}
+                  style={{ 
+                    ...styles.button, 
+                    flex: 1,
+                    opacity: emailSending ? 0.5 : 1 
+                  }}
+                >
+                  {emailSending ? 'Sending...' : 'Send Report'}
+                </button>
+                <button
+                  onClick={() => setShowEmailModal(false)}
+                  style={styles.buttonSecondary}
+                >
+                  Cancel
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 
-        {/* Empty State */}
-        {!results && !isAnalyzing && (
-          <div style={{ textAlign: 'center', padding: '80px 40px', background: '#FFFFFF', borderRadius: '20px', border: '1px dashed #E5E7EB' }}>
-            <div style={{ fontSize: '64px', marginBottom: '24px' }}>🔍</div>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '24px', fontWeight: '700', color: '#1B1B1B' }}>Ready to Analyze Your Entity Visibility</h3>
-            <p style={{ margin: 0, fontSize: '16px', color: '#6B7280', maxWidth: '500px', marginLeft: 'auto', marginRight: 'auto' }}>
-              Enter your company information and see how AI search engines perceive your brand.
-            </p>
-          </div>
-        )}
-      </main>
-
-      {/* Strategy Modal */}
-      {showStrategyModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }} onClick={(e) => e.target === e.currentTarget && setShowStrategyModal(false)}>
-          <div style={{ background: '#FFFFFF', borderRadius: '20px', padding: '40px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px rgba(0,0,0,0.25)' }}>
-            {!strategySubmitted ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
-                  <div>
-                    <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', fontWeight: '700', color: '#1B1B1B' }}>Get Your AI Search Strategy</h2>
-                    <p style={{ margin: 0, fontSize: '14px', color: '#6B7280' }}>Our team will create a custom strategy to improve your visibility.</p>
-                  </div>
-                  <button onClick={() => setShowStrategyModal(false)} style={{ width: '36px', height: '36px', background: '#F3F4F6', border: 'none', borderRadius: '8px', color: '#6B7280', fontSize: '18px', cursor: 'pointer' }}>×</button>
-                </div>
-                <div style={{ display: 'grid', gap: '16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div><label style={labelStyle}>Name *</label><input type="text" value={strategyForm.name} onChange={(e) => setStrategyForm(p => ({ ...p, name: e.target.value }))} style={inputStyle} /></div>
-                    <div><label style={labelStyle}>Email *</label><input type="email" value={strategyForm.email} onChange={(e) => setStrategyForm(p => ({ ...p, email: e.target.value }))} style={inputStyle} /></div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div><label style={labelStyle}>Phone</label><input type="tel" value={strategyForm.phone} onChange={(e) => setStrategyForm(p => ({ ...p, phone: e.target.value }))} style={inputStyle} /></div>
-                    <div><label style={labelStyle}>Company</label><input type="text" value={strategyForm.company || formData.companyName} onChange={(e) => setStrategyForm(p => ({ ...p, company: e.target.value }))} style={inputStyle} /></div>
-                  </div>
-                  <div><label style={labelStyle}>AI Visibility Goals *</label><textarea value={strategyForm.goals} onChange={(e) => setStrategyForm(p => ({ ...p, goals: e.target.value }))} rows={3} placeholder="What do you want to achieve with AI search?" style={{ ...inputStyle, resize: 'vertical' }} /></div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div><label style={labelStyle}>Budget Range</label><select value={strategyForm.budget} onChange={(e) => setStrategyForm(p => ({ ...p, budget: e.target.value }))} style={inputStyle}><option value="">Select...</option><option value="under-5k">Under $5k/mo</option><option value="5k-10k">$5k-$10k/mo</option><option value="10k-25k">$10k-$25k/mo</option><option value="25k+">$25k+/mo</option></select></div>
-                    <div><label style={labelStyle}>Timeline</label><select value={strategyForm.timeline} onChange={(e) => setStrategyForm(p => ({ ...p, timeline: e.target.value }))} style={inputStyle}><option value="">Select...</option><option value="asap">ASAP</option><option value="1-month">Within 1 month</option><option value="1-3-months">1-3 months</option></select></div>
-                  </div>
-                  {results && (
-                    <div style={{ padding: '16px', background: '#FFF7ED', borderRadius: '10px', border: '1px solid #FDBA74' }}>
-                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#E85D04', marginBottom: '8px' }}>YOUR CURRENT SCORES</div>
-                      <div style={{ display: 'flex', gap: '20px', fontSize: '14px' }}>
-                        <span>Overall: <strong>{calculateOverallScore()}</strong></span>
-                        <span>Company: <strong>{calculateCategoryScores().company}</strong></span>
-                        <span>Leadership: <strong>{calculateCategoryScores().leadership}</strong></span>
-                      </div>
-                    </div>
-                  )}
-                  <button onClick={submitStrategyRequest} disabled={!strategyForm.name || !strategyForm.email || !strategyForm.goals} style={{ width: '100%', padding: '16px', background: (!strategyForm.name || !strategyForm.email || !strategyForm.goals) ? '#E5E7EB' : 'linear-gradient(135deg, #E85D04 0%, #F48C06 100%)', border: 'none', borderRadius: '10px', color: (!strategyForm.name || !strategyForm.email || !strategyForm.goals) ? '#9CA3AF' : '#FFF', fontSize: '16px', fontWeight: '600', cursor: (!strategyForm.name || !strategyForm.email || !strategyForm.goals) ? 'not-allowed' : 'pointer', marginTop: '8px' }}>Submit Request</button>
-                </div>
-              </>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{ width: '80px', height: '80px', background: 'linear-gradient(135deg, #10B981, #34D399)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', fontSize: '40px', color: '#FFF' }}>✓</div>
-                <h3 style={{ margin: '0 0 12px 0', fontSize: '24px', fontWeight: '700', color: '#1B1B1B' }}>Request Submitted!</h3>
-                <p style={{ margin: 0, fontSize: '16px', color: '#6B7280' }}>Our team will reach out within 24-48 hours.</p>
-              </div>
-            )}
-          </div>
+        {/* Footer */}
+        <div style={{ textAlign: 'center', padding: '20px', color: 'rgba(255,255,255,0.4)', fontSize: '12px' }}>
+          Built by Abstrakt Marketing Group | Entity-Based SEO & Backlink Analysis
         </div>
-      )}
-
-      {/* Footer */}
-      <footer style={{ textAlign: 'center', padding: '40px', borderTop: '1px solid #E5E7EB', background: '#FFFFFF' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '12px' }}>
-          <div style={{ width: '32px', height: '32px', background: 'linear-gradient(135deg, #E85D04, #F48C06)', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ color: '#FFF', fontWeight: '800', fontSize: '16px' }}>A</span>
-          </div>
-          <span style={{ fontSize: '16px', fontWeight: '700', color: '#1B1B1B' }}>Abstrakt Marketing Group</span>
-        </div>
-        <p style={{ margin: 0, fontSize: '14px', color: '#6B7280' }}>Entity SEO Checker • AI Search Visibility Analysis</p>
-        <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#9CA3AF' }}>
-          <a href="https://www.abstraktmg.com" target="_blank" rel="noopener noreferrer" style={{ color: '#E85D04', textDecoration: 'none' }}>abstraktmg.com</a> • (314) 338-8865
-        </p>
-      </footer>
+      </div>
     </div>
   );
 };
